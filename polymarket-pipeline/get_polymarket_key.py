@@ -2,7 +2,7 @@ from py_clob_client.client import ClobClient
 
 client = ClobClient(
     "https://clob.polymarket.com",
-    key="f68bafab53b3a4595a136c58fe50b2caf65de97a2edf9bce1453a25681985d90",
+    key="",
     chain_id=137
 )
 
