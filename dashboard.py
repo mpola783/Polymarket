@@ -230,7 +230,7 @@ def render_scanner() -> Panel:
         s = sig["score"]
         t = sig["trade"]
         signal_questions.add(m.question)
-        edge_pct = f"{s['edge']:.0%}"
+        edge_pct = f"{s.get('edge', abs(s.get('confidence', 0.5) - 0.5)):.0%}"
         side_style = WIN if t["side"] == "YES" else "bright_magenta"
 
         status = t.get("status", "dry_run")

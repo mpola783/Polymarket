@@ -42,6 +42,7 @@ class TwitterStream:
         self.keywords = keywords
         self.base_url = "https://api.twitter.com/2"
         self.enabled = bool(bearer_token)
+        self._rules_setup = False  # ADD THIS
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.bearer_token}"}
@@ -93,13 +94,17 @@ class TwitterStream:
             log.info("[twitter] No bearer token — stream disabled")
             return
 
-        try:
-            await self.setup_rules()
-        except Exception as e:
-            log.warning(f"[twitter] Failed to setup rules: {e}")
-            return
+        if not self._rules_setup:
+            try:
+                await self.setup_rules()
+                self._rules_setup = True
+            except Exception as e:
+                log.warning(f"[twitter] Failed to setup rules: {e}")
+                return
 
         backoff = 1
+        self._tweet_count = 0                          # ADD HERE
+        self._tweet_reset_time = time.time() + 3600    # ADD HERE
         while True:
             try:
                 async with httpx.AsyncClient() as client:
@@ -128,6 +133,15 @@ class TwitterStream:
                                 except (ValueError, AttributeError):
                                     pub = now
                                     latency = 0
+
+                                # Rate limit check                             # ADD HERE
+                                if time.time() > self._tweet_reset_time:       # ADD HERE
+                                    self._tweet_count = 0                      # ADD HERE
+                                    self._tweet_reset_time = time.time() + 3600 # ADD HERE
+                                if self._tweet_count >= 500:                   # ADD HERE
+                                    log.debug("[twitter] Hourly tweet limit reached, skipping") # ADD HERE
+                                    continue                                    # ADD HERE
+                                self._tweet_count += 1                         # ADD HERE
 
                                 event = NewsEvent(
                                     headline=text[:280],

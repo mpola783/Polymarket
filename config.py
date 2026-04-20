@@ -12,7 +12,7 @@ POLYMARKET_API_SECRET = os.getenv("POLYMARKET_API_SECRET", "")
 POLYMARKET_API_PASSPHRASE = os.getenv("POLYMARKET_API_PASSPHRASE", "")
 POLYMARKET_PRIVATE_KEY = os.getenv("POLYMARKET_PRIVATE_KEY", "")
 POLYMARKET_HOST = "https://clob.polymarket.com"
-POLYMARKET_WS_HOST = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+POLYMARKET_WS_HOST = "wss://ws-live-data.polymarket.com"
 
 # --- Twitter API v2 ---
 TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN", "")
@@ -49,6 +49,9 @@ MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.6"))
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
 CLASSIFICATION_MODEL = "claude-haiku-4-5-20251001"
 SCORING_MODEL = "claude-sonnet-4-6-20250514"
+
+# --- Signal Ledger checkpoint delays (seconds after signal fires) ---
+CHECKPOINT_DELAYS: dict[str, int] = {"5m": 300, "1h": 3600, "6h": 21600}
 
 # --- Categories to track ---
 MARKET_CATEGORIES = [

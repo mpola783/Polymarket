@@ -85,7 +85,32 @@ def init_db():
     """)
     # Add V2 columns to existing trades table if missing
     _migrate_v2_columns(conn)
+    _init_signal_ledger(conn)
     conn.close()
+
+
+def _init_signal_ledger(conn: sqlite3.Connection) -> None:
+    """Create signal_ledger table if it doesn't exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS signal_ledger (
+            signal_id       TEXT PRIMARY KEY,
+            market_id       TEXT NOT NULL,
+            market_question TEXT NOT NULL,
+            side            TEXT NOT NULL,
+            classification  TEXT,
+            materiality     REAL,
+            entry_price     REAL NOT NULL,
+            headline        TEXT,
+            source          TEXT,
+            fired_at        TEXT NOT NULL,
+            price_5m        REAL,
+            price_1h        REAL,
+            price_6h        REAL,
+            resolved_price  REAL,
+            pnl_hypothetical REAL
+        )
+    """)
+    conn.commit()
 
 
 def _migrate_v2_columns(conn):
@@ -323,6 +348,45 @@ def get_latency_stats() -> dict:
         "avg_class_ms": round(row["avg_class"] or 0),
         "count": row["count"],
     }
+
+
+_VALID_CHECKPOINT_COLS = {"price_5m", "price_1h", "price_6h"}
+
+
+def log_ledger_entry(entry: "LedgerEntry") -> None:
+    conn = _conn()
+    conn.execute(
+        """INSERT OR IGNORE INTO signal_ledger
+           (signal_id, market_id, market_question, side, classification,
+            materiality, entry_price, headline, source, fired_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (entry.signal_id, entry.market_id, entry.market_question, entry.side,
+         entry.classification, entry.materiality, entry.entry_price,
+         entry.headline, entry.source, entry.fired_at.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_ledger_checkpoint(signal_id: str, label: str, price: float) -> None:
+    if label not in _VALID_CHECKPOINT_COLS:
+        raise ValueError(f"Invalid checkpoint label: {label!r}")
+    conn = _conn()
+    conn.execute(
+        f"UPDATE signal_ledger SET {label} = ? WHERE signal_id = ?",
+        (price, signal_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_ledger_entries(limit: int = 50) -> list[dict]:
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT * FROM signal_ledger ORDER BY fired_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 init_db()

@@ -22,7 +22,7 @@ from scorer import score_market, filter_news_for_market
 from edge import detect_edge, detect_edge_v2, Signal
 from executor import execute_trade, execute_trade_async
 from news_stream import NewsAggregator, NewsEvent
-from market_watcher import MarketWatcher
+from market_watcher import MarketWatcher, SignalLedger
 from matcher import match_news_to_markets
 from classifier import classify_async
 
@@ -42,6 +42,7 @@ class PipelineV2:
         self.signal_queue: asyncio.Queue = asyncio.Queue()
         self.news_aggregator = NewsAggregator(self.news_queue)
         self.market_watcher = MarketWatcher()
+        self.signal_ledger = SignalLedger(self.market_watcher)
         self.running = False
         self.stats = {
             "news_processed": 0,
@@ -79,6 +80,22 @@ class PipelineV2:
             self.stats["news_processed"] += 1
 
             # Log the news event
+            self.stats.setdefault("twitter_count", 0)
+            self.stats.setdefault("rss_count", 0)
+            self.stats.setdefault("telegram_count", 0)
+            self.stats.setdefault("classifications_run", 0)
+            if event.source == "twitter":
+                self.stats["twitter_count"] += 1
+            elif event.source == "rss":
+                self.stats["rss_count"] += 1
+            elif event.source == "telegram":
+                self.stats["telegram_count"] += 1
+            console.print(
+                f"  [cyan]NEWS [{event.source}] {event.headline[:80]}[/cyan]"
+                f"  [dim](tw:{self.stats['twitter_count']} "
+                f"rss:{self.stats['rss_count']} "
+                f"tg:{self.stats['telegram_count']})[/dim]"
+            )
             logger.log_news_event(
                 headline=event.headline,
                 source=event.source,
@@ -103,7 +120,9 @@ class PipelineV2:
                     classification = await classify_async(
                         event.headline, market, event.source
                     )
-
+                    self.stats["classifications_run"] += 1
+                    est_cost = self.stats["classifications_run"] * 0.003
+                    console.print(f"  [dim]CLASS [{event.source}] {market.question[:40]} → {classification.direction} mat:{classification.materiality:.2f} | ~${est_cost:.3f} spent[/dim]")
                     signal = detect_edge_v2(market, classification, event)
                     if signal:
                         self.stats["signals_found"] += 1
@@ -125,6 +144,11 @@ class PipelineV2:
             signal: Signal = await self.signal_queue.get()
             result = await execute_trade_async(signal)
             self.stats["trades_executed"] += 1
+
+            try:
+                self.signal_ledger.add(signal)
+            except Exception as e:
+                log.warning(f"[pipeline] SignalLedger.add failed: {e}")
 
             status_color = "bright_green" if result["status"] in ("dry_run", "executed") else "red"
             console.print(
