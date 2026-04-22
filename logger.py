@@ -389,4 +389,16 @@ def get_ledger_entries(limit: int = 50) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def update_ledger_resolution(
+    signal_id: str, resolved_price: float, pnl_hypothetical: float
+) -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE signal_ledger SET resolved_price = ?, pnl_hypothetical = ? WHERE signal_id = ?",
+        (resolved_price, pnl_hypothetical, signal_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 init_db()

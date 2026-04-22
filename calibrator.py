@@ -47,7 +47,7 @@ def check_resolutions():
         try:
             resp = httpx.get(
                 f"{GAMMA_API}/markets",
-                params={"condition_id": market_id},
+                params=[("condition_ids", market_id), ("closed", "true")],
                 timeout=10,
             )
             data = resp.json()
@@ -57,8 +57,8 @@ def check_resolutions():
                 continue
 
             market_data = items[0]
-            if not market_data.get("closed", False):
-                continue
+            if market_data.get("conditionId") != market_id:
+                continue  # safety: reject mismatched response
 
             # Market resolved — determine direction
             outcome_prices = market_data.get("outcomePrices", "")

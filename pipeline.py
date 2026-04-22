@@ -22,12 +22,21 @@ from scorer import score_market, filter_news_for_market
 from edge import detect_edge, detect_edge_v2, Signal
 from executor import execute_trade, execute_trade_async
 from news_stream import NewsAggregator, NewsEvent
-from market_watcher import MarketWatcher, SignalLedger
+from market_watcher import MarketWatcher, SignalLedger, PaperPortfolio
 from matcher import match_news_to_markets
 from classifier import classify_async
 
 console = Console()
 log = logging.getLogger(__name__)
+
+
+def _momentum_confirms(direction: str, momentum: float) -> bool:
+    """Fail-open gate: require market momentum to agree with classification direction."""
+    if direction == "bullish":
+        return momentum >= config.MOMENTUM_MIN_DELTA
+    if direction == "bearish":
+        return momentum <= -config.MOMENTUM_MIN_DELTA
+    return True
 
 
 # ============================================================
@@ -43,11 +52,13 @@ class PipelineV2:
         self.news_aggregator = NewsAggregator(self.news_queue)
         self.market_watcher = MarketWatcher()
         self.signal_ledger = SignalLedger(self.market_watcher)
+        self.paper_portfolio = PaperPortfolio(self.signal_ledger)
         self.running = False
         self.stats = {
             "news_processed": 0,
             "markets_matched": 0,
             "signals_found": 0,
+            "signals_suppressed_by_momentum": 0,
             "trades_executed": 0,
         }
 
@@ -68,6 +79,7 @@ class PipelineV2:
                 self._process_news(),
                 self._execute_signals(),
                 self._status_printer(),
+                self.paper_portfolio.run(),
                 return_exceptions=True,
             )
         except asyncio.CancelledError:
@@ -125,6 +137,15 @@ class PipelineV2:
                     console.print(f"  [dim]CLASS [{event.source}] {market.question[:40]} → {classification.direction} mat:{classification.materiality:.2f} | ~${est_cost:.3f} spent[/dim]")
                     signal = detect_edge_v2(market, classification, event)
                     if signal:
+                        snap = self.market_watcher.get_snapshot(market.condition_id)
+                        if snap and not _momentum_confirms(classification.direction, snap.momentum):
+                            self.stats["signals_suppressed_by_momentum"] += 1
+                            console.print(
+                                f"  [yellow]SUPPRESS[/yellow] [{event.source}] "
+                                f"{classification.direction} vs momentum={snap.momentum:+.4f}/min "
+                                f"on \"{market.question[:40]}...\""
+                            )
+                            continue
                         self.stats["signals_found"] += 1
                         await self.signal_queue.put(signal)
                         console.print(
@@ -169,6 +190,7 @@ class PipelineV2:
                 f"(tw:{ns.get('twitter', 0)} tg:{ns.get('telegram', 0)} rss:{ns.get('rss', 0)}) "
                 f"matched={self.stats['markets_matched']} "
                 f"signals={self.stats['signals_found']} "
+                f"suppressed={self.stats['signals_suppressed_by_momentum']} "
                 f"trades={self.stats['trades_executed']} "
                 f"markets={len(self.market_watcher.tracked_markets)}[/dim]\n"
             )

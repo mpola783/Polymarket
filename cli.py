@@ -377,6 +377,87 @@ def cmd_stats(args):
         console.print(f"    Accuracy: {cal['accuracy']:.1f}% ({cal['total']} resolved)")
 
 
+def cmd_paper(args):
+    import logger
+
+    entries = logger.get_ledger_entries(limit=args.limit)
+    if not entries:
+        console.print("[yellow]No signals in ledger yet.[/yellow]")
+        return
+
+    open_entries = [e for e in entries if e.get("resolved_price") is None]
+    closed_entries = [e for e in entries if e.get("resolved_price") is not None]
+
+    total_pnl = sum((e.get("pnl_hypothetical") or 0.0) for e in closed_entries)
+    wins = sum(1 for e in closed_entries if (e.get("pnl_hypothetical") or 0.0) > 0)
+    win_rate = (wins / len(closed_entries) * 100) if closed_entries else 0.0
+
+    pnl_style = "bright_green" if total_pnl >= 0 else "red"
+    pnl_str = f"+{total_pnl:.3f}" if total_pnl >= 0 else f"{total_pnl:.3f}"
+
+    summary = Table(title="Paper Portfolio", show_header=True, header_style="bold cyan")
+    summary.add_column("Metric", style="bold")
+    summary.add_column("Value", justify="right")
+    summary.add_row("Total signals", str(len(entries)))
+    summary.add_row("Open (awaiting resolution)", str(len(open_entries)))
+    summary.add_row("Closed (resolved)", str(len(closed_entries)))
+    summary.add_row("Hypothetical PnL (per $1)", f"[{pnl_style}]{pnl_str}[/{pnl_style}]")
+    summary.add_row("Win rate", f"{win_rate:.1f}%")
+    console.print(summary)
+
+    # Breakdowns among closed
+    if closed_entries:
+        by_cls: dict[str, list[float]] = {}
+        by_src: dict[str, list[float]] = {}
+        for e in closed_entries:
+            cls = e.get("classification") or "unknown"
+            src = e.get("source") or "unknown"
+            pnl = e.get("pnl_hypothetical") or 0.0
+            by_cls.setdefault(cls, []).append(pnl)
+            by_src.setdefault(src, []).append(pnl)
+
+        breakdown = Table(title="Breakdown (closed positions)", show_header=True, header_style="bold green")
+        breakdown.add_column("Bucket")
+        breakdown.add_column("Count", justify="right")
+        breakdown.add_column("PnL (per $1)", justify="right")
+        breakdown.add_column("Win rate", justify="right")
+        for bucket, pnls in sorted(by_cls.items()):
+            b_wins = sum(1 for p in pnls if p > 0)
+            breakdown.add_row(
+                f"cls={bucket}",
+                str(len(pnls)),
+                f"{sum(pnls):+.3f}",
+                f"{b_wins / len(pnls) * 100:.1f}%",
+            )
+        for bucket, pnls in sorted(by_src.items()):
+            b_wins = sum(1 for p in pnls if p > 0)
+            breakdown.add_row(
+                f"src={bucket}",
+                str(len(pnls)),
+                f"{sum(pnls):+.3f}",
+                f"{b_wins / len(pnls) * 100:.1f}%",
+            )
+        console.print(breakdown)
+
+        recent = Table(title="Recent closed positions", show_header=True, header_style="bold cyan")
+        recent.add_column("Market", max_width=45)
+        recent.add_column("Side", width=4)
+        recent.add_column("Entry", justify="right", width=7)
+        recent.add_column("Resolved", justify="right", width=9)
+        recent.add_column("PnL", justify="right", width=8)
+        for e in closed_entries[:20]:
+            pnl = e.get("pnl_hypothetical") or 0.0
+            pnl_style = "bright_green" if pnl >= 0 else "red"
+            recent.add_row(
+                (e.get("market_question") or "")[:45],
+                e.get("side") or "—",
+                f"{e.get('entry_price') or 0:.3f}",
+                f"{e.get('resolved_price') or 0:.3f}",
+                f"[{pnl_style}]{pnl:+.3f}[/{pnl_style}]",
+            )
+        console.print(recent)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Polymarket Pipeline V2")
     sub = parser.add_subparsers(dest="command")
@@ -436,6 +517,11 @@ def main():
     # stats
     p_stats = sub.add_parser("stats", help="Performance statistics")
     p_stats.set_defaults(func=cmd_stats)
+
+    # paper
+    p_paper = sub.add_parser("paper", help="Hypothetical PnL from the signal ledger")
+    p_paper.add_argument("--limit", type=int, default=500, help="Number of ledger entries to scan")
+    p_paper.set_defaults(func=cmd_paper)
 
     args = parser.parse_args()
     if not args.command:

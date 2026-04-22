@@ -53,6 +53,12 @@ SCORING_MODEL = "claude-sonnet-4-6-20250514"
 # --- Signal Ledger checkpoint delays (seconds after signal fires) ---
 CHECKPOINT_DELAYS: dict[str, int] = {"5m": 300, "1h": 3600, "6h": 21600}
 
+# --- Momentum gate (suppress signals when price isn't moving in predicted direction) ---
+MOMENTUM_MIN_DELTA = float(os.getenv("MOMENTUM_MIN_DELTA", "0.001"))
+
+# --- PaperPortfolio resolution polling ---
+RESOLUTION_CHECK_INTERVAL_SECONDS = int(os.getenv("RESOLUTION_CHECK_INTERVAL_SECONDS", "1800"))
+
 # --- Categories to track ---
 MARKET_CATEGORIES = [
     "ai",

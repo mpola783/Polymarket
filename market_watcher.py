@@ -306,6 +306,85 @@ class SignalLedger:
         return [e for e in self.entries.values() if e.resolved_price is None]
 
 
+class PaperPortfolio:
+    """Polls Gamma API for resolution of open ledger entries; records hypothetical PnL."""
+
+    def __init__(self, signal_ledger: SignalLedger) -> None:
+        self._ledger = signal_ledger
+
+    async def run(self, interval: int = config.RESOLUTION_CHECK_INTERVAL_SECONDS) -> None:
+        while True:
+            try:
+                await self._check_once()
+            except Exception as e:
+                log.warning(f"[paper] resolution check failed: {e}")
+            await asyncio.sleep(interval)
+
+    async def _check_once(self) -> None:
+        loop = asyncio.get_running_loop()
+        open_entries = self._ledger.get_open_entries()
+        if not open_entries:
+            return
+        log.debug(f"[paper] checking {len(open_entries)} open ledger entries for resolution")
+        for entry in open_entries:
+            resolved = await loop.run_in_executor(
+                None, self._fetch_resolution, entry.market_id
+            )
+            if resolved is None:
+                continue
+            pnl = (
+                resolved - entry.entry_price
+                if entry.side == "YES"
+                else entry.entry_price - resolved
+            )
+            entry.resolved_price = resolved
+            entry.pnl_hypothetical = pnl
+            try:
+                await loop.run_in_executor(
+                    None,
+                    logger.update_ledger_resolution,
+                    entry.signal_id,
+                    resolved,
+                    pnl,
+                )
+            except Exception as e:
+                log.warning(
+                    f"[paper] DB resolution update failed for {entry.signal_id[:8]}: {e}"
+                )
+            log.info(
+                f"[paper] resolved {entry.signal_id[:8]}: "
+                f"entry={entry.entry_price:.3f} → {resolved:.3f}, pnl={pnl:+.3f} "
+                f"[{entry.side}] \"{entry.market_question[:40]}\""
+            )
+
+    def _fetch_resolution(self, market_id: str) -> float | None:
+        """Return resolved YES-price if the market is closed, else None."""
+        try:
+            resp = httpx.get(
+                f"{GAMMA_API}/markets",
+                params=[("condition_ids", market_id), ("closed", "true")],
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            items = data if isinstance(data, list) else data.get("data", [])
+            if not items:
+                return None  # not closed (or not found)
+            market_data = items[0]
+            if market_data.get("conditionId") != market_id:
+                return None  # safety: reject mismatched response
+            prices = market_data.get("outcomePrices", "")
+            if not prices:
+                return None
+            parsed = json.loads(prices) if isinstance(prices, str) else prices
+            if not parsed:
+                return None
+            return float(parsed[0])
+        except Exception as e:
+            log.warning(f"[paper] resolution fetch failed for {market_id}: {e}")
+            return None
+
+
 if __name__ == "__main__":
     async def _test():
         watcher = MarketWatcher()
